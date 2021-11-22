@@ -3,7 +3,7 @@ use std::{env, fs::File, io::Write, path::PathBuf};
 use anyhow::{bail, Result};
 use bincode::{config::Configuration, decode_from_slice, encode_to_vec, Decode, Encode};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveDateTime};
 use directories::BaseDirs;
 use git2::{Repository, Status};
 use sled::Db;
@@ -37,6 +37,24 @@ fn main() -> Result<()> {
     }
     if args[1] == "restore" {
         restore()?;
+    }
+    if args[1] == "list" {
+        list()?;
+    }
+
+    Ok(())
+}
+
+fn list() -> Result<()> {
+    let db = open_db()?;
+
+    for bccr in db.iter() {
+        let cr: Crate = decode_from_slice(&bccr?.1, Configuration::standard())?;
+        let ndt = NaiveDateTime::from_timestamp(cr.date as i64, 0);
+        println!("{}:", ndt);
+        for file in cr.file_list {
+            println!("\t{}", file);
+        }
     }
 
     Ok(())
