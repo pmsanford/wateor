@@ -1,4 +1,9 @@
-use std::{env, fs::File, io::Write, path::PathBuf};
+use std::{
+    env,
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 use anyhow::{bail, Result};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
@@ -42,7 +47,6 @@ fn restore(file_name: String) -> Result<()> {
     let data_dir = storage_location()?;
     let repo = find_repo()?;
 
-    println!("Restoring from {}", file_name);
     let file = File::open(file_name)?;
     let decoder = BzDecoder::new(file);
     let mut tar = Archive::new(decoder);
@@ -55,17 +59,16 @@ fn restore(file_name: String) -> Result<()> {
         .map(|s| PathBuf::from(s.path().unwrap()))
         .collect();
 
-    println!("Tar loaded");
-
+    println!("Restoring to {:#?}", repo.path);
     for entry in tar.entries()? {
-        let entry = entry?;
+        let mut entry = entry?;
         let path = entry.path()?;
         if non_current.contains(&PathBuf::from(&*path)) {
             println!("{:#?} already in repo and dirty", path);
             continue;
         }
-        let mut dest = File::create(path)?;
-        dest.write_all(&entry.path_bytes())?;
+        println!("Unpacking {:#?}", path);
+        entry.unpack_in(&repo.path)?;
     }
 
     Ok(())
@@ -123,11 +126,10 @@ fn store() -> Result<()> {
         tar.finish()?;
     }
 
-    let mut bz2_back: Vec<u8> = Vec::new();
+    let mut back: Vec<u8> = Vec::new();
 
-    let mut encoder = BzEncoder::new(&mut bz2_back, Compression::fast());
+    let mut encoder = BzEncoder::new(&mut back, Compression::fast());
     encoder.write_all(&tar_back)?;
-
     encoder.finish()?;
 
     let dt: DateTime<Local> = Local::now();
@@ -137,7 +139,7 @@ fn store() -> Result<()> {
 
     let mut file = File::create(savepath)?;
 
-    file.write_all(&bz2_back)?;
+    file.write_all(&back)?;
 
     for file in stored_files.into_iter() {
         std::fs::remove_file(file.path().unwrap())?;
