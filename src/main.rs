@@ -1,9 +1,4 @@
-use std::{
-    env,
-    fs::File,
-    io::{Read, Write},
-    path::PathBuf,
-};
+use std::{env, fs::File, io::Write, path::PathBuf};
 
 use anyhow::{bail, Result};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
@@ -20,7 +15,7 @@ struct Repo {
 fn storage_location() -> Result<PathBuf> {
     let bd = BaseDirs::new().unwrap();
     let mut data_dir = PathBuf::from(bd.data_local_dir());
-    data_dir.push("hateor");
+    data_dir.push("wateor");
     std::fs::create_dir_all(&data_dir)?;
     Ok(data_dir)
 }
@@ -44,7 +39,7 @@ fn main() -> Result<()> {
 }
 
 fn restore(file_name: String) -> Result<()> {
-    let data_dir = storage_location()?;
+    let _data_dir = storage_location()?;
     let repo = find_repo()?;
 
     let file = File::open(file_name)?;
@@ -98,12 +93,13 @@ fn store() -> Result<()> {
         .filter(|s| s.status() == Status::WT_NEW && s.path().is_some())
         .collect();
 
-    let mut tar_back: Vec<u8> = Vec::new();
+    let mut back: Vec<u8> = Vec::new();
+    let mut encoder = BzEncoder::new(&mut back, Compression::fast());
 
     let mut stored_files = Vec::new();
 
     {
-        let mut tar = Builder::new(&mut tar_back);
+        let mut tar = Builder::new(&mut encoder);
 
         for file in new.into_iter() {
             let mut fullpath = repo.path.clone();
@@ -126,10 +122,6 @@ fn store() -> Result<()> {
         tar.finish()?;
     }
 
-    let mut back: Vec<u8> = Vec::new();
-
-    let mut encoder = BzEncoder::new(&mut back, Compression::fast());
-    encoder.write_all(&tar_back)?;
     encoder.finish()?;
 
     let dt: DateTime<Local> = Local::now();
