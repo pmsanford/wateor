@@ -1,10 +1,12 @@
 use std::{env, fs::File, io::Write, path::PathBuf};
 
 use anyhow::{bail, Result};
+use bincode::{config::Configuration, decode_from_slice, encode_to_vec, Decode, Encode};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
 use chrono::{DateTime, Local};
 use directories::BaseDirs;
 use git2::{Repository, Status};
+use sled::Db;
 use tar::{Archive, Builder};
 
 struct Repo {
@@ -20,6 +22,11 @@ fn storage_location() -> Result<PathBuf> {
     Ok(data_dir)
 }
 
+fn open_db() -> Result<Db> {
+    let data_dir = storage_location()?;
+    Ok(sled::open(data_dir.join("wateor.db"))?)
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -29,20 +36,24 @@ fn main() -> Result<()> {
         store()?;
     }
     if args[1] == "restore" {
-        if args.len() < 3 {
-            bail!("Need a filename");
-        }
-        restore(args[2].clone())?;
+        restore()?;
     }
 
     Ok(())
 }
 
-fn restore(file_name: String) -> Result<()> {
-    let _data_dir = storage_location()?;
+fn restore() -> Result<()> {
     let repo = find_repo()?;
+    let db = open_db()?;
+    let latest = db.last()?;
 
-    let file = File::open(file_name)?;
+    if latest.is_none() {
+        bail!("No archives found");
+    }
+    let latest = latest.unwrap();
+    let cr: Crate = decode_from_slice(&latest.1, Configuration::standard())?;
+
+    let file = File::open(cr.archive_path)?;
     let decoder = BzDecoder::new(file);
     let mut tar = Archive::new(decoder);
 
@@ -82,9 +93,20 @@ fn find_repo() -> Result<Repo> {
     Ok(Repo { repo, path })
 }
 
+#[derive(Encode, Decode)]
+struct Crate {
+    date: u64,
+    archive_path: PathBuf,
+    file_list: Vec<String>,
+}
+
 fn store() -> Result<()> {
     let data_dir = storage_location()?;
     let repo = find_repo()?;
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let db = open_db()?;
 
     let statuses = repo.repo.statuses(None)?;
 
@@ -129,13 +151,27 @@ fn store() -> Result<()> {
     let mut savepath = data_dir.clone();
     savepath.push(fname);
 
-    let mut file = File::create(savepath)?;
+    let mut file = File::create(savepath.clone())?;
 
     file.write_all(&back)?;
 
-    for file in stored_files.into_iter() {
+    for file in stored_files.iter() {
         std::fs::remove_file(file.path().unwrap())?;
     }
+
+    let cr = Crate {
+        date: time,
+        archive_path: PathBuf::from(savepath),
+        file_list: stored_files
+            .into_iter()
+            .map(|f| f.path().unwrap().to_string())
+            .collect(),
+    };
+
+    db.insert(
+        time.to_be_bytes(),
+        encode_to_vec(cr, Configuration::standard())?,
+    )?;
 
     Ok(())
 }
