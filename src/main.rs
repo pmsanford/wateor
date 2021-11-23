@@ -17,7 +17,7 @@ use openssl::{
     symm::{decrypt, encrypt, Cipher},
 };
 use rand::Rng;
-use sled::Db;
+use sled::{Db, IVec};
 use tar::{Archive, Builder};
 
 static PRIV_KEY_NAME: &str = "key.pem";
@@ -42,36 +42,47 @@ fn open_db() -> Result<Db> {
     Ok(sled::open(data_dir.join(DB_FOLDER_NAME))?)
 }
 
+fn decode_crate(db_item: (IVec, IVec)) -> Result<Crate> {
+    Ok(decode_from_slice(&db_item.1, Configuration::standard())?)
+}
+
+fn check_init() -> Result<bool> {
+    let data_dir = storage_location()?;
+    Ok(data_dir.exists())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         bail!("Need a command");
     }
-    if args[1] == "store" {
-        store()?;
-    }
-    if args[1] == "restore" {
-        restore()?;
-    }
-    if args[1] == "list" {
-        list()?;
-    }
     if args[1] == "init" {
         init()?;
-    }
-    if args[1] == "reinit" {
-        let data_dir = storage_location()?;
-        let _ = std::fs::remove_dir_all(data_dir.join(DB_FOLDER_NAME));
-        let _ = std::fs::remove_file(data_dir.join("key.pem"));
-        let _ = std::fs::remove_file(data_dir.join("pub.pem"));
-        for entry in walkdir::WalkDir::new(&data_dir).max_depth(1) {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().map(|ext| ext == "bz2") == Some(true) {
-                std::fs::remove_file(path)?;
-            }
+    } else {
+        if !check_init()? {
+            bail!("Need to run init first");
         }
-        init()?;
+        match args[1].as_str() {
+            "store" => store(),
+            "restore" => restore(),
+            "list" => list(),
+            "clean" => {
+                let db = open_db()?;
+                for archive in db.iter().map(|r| r.map(decode_crate)) {
+                    let archive = archive??;
+                    std::fs::remove_file(&archive.archive_path)?;
+                }
+                let data_dir = storage_location()?;
+                let _ = std::fs::remove_dir_all(data_dir.join(DB_FOLDER_NAME));
+                let _ = std::fs::remove_file(data_dir.join("key.pem"));
+                let _ = std::fs::remove_file(data_dir.join("pub.pem"));
+                Ok(())
+            }
+            _ => {
+                println!("Try init, store, restore, list, clean");
+                Ok(())
+            }
+        }?;
     }
 
     Ok(())
