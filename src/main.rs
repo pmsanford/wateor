@@ -135,19 +135,17 @@ fn restore() -> Result<()> {
     let decoder = BzDecoder::new(&*unencrypted);
     let mut tar = Archive::new(decoder);
 
-    let non_current: Vec<_> = repo
-        .repo
-        .statuses(None)?
+    let statuses = repo.repo.statuses(None)?;
+    let mut non_current = statuses
         .iter()
         .filter(|s| s.status() != Status::CURRENT && s.path().is_some())
-        .map(|s| PathBuf::from(s.path().unwrap()))
-        .collect();
+        .map(|s| PathBuf::from(s.path().unwrap()));
 
     println!("Restoring to {:#?}", repo.path);
     for entry in tar.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
-        if non_current.contains(&PathBuf::from(&*path)) {
+        if non_current.any(|p| p == path) {
             println!("{:#?} already in repo and dirty", path);
             continue;
         }
