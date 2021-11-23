@@ -20,8 +20,8 @@ use rand::Rng;
 use sled::Db;
 use tar::{Archive, Builder};
 
-static PRIV_KEY_NAME: &'static str = "key.pem";
-static PUB_KEY_NAME: &'static str = "pub.pem";
+static PRIV_KEY_NAME: &str = "key.pem";
+static PUB_KEY_NAME: &str = "pub.pem";
 
 struct Repo {
     repo: Repository,
@@ -208,10 +208,9 @@ fn store() -> Result<()> {
 
     let statuses = repo.repo.statuses(None)?;
 
-    let new: Vec<_> = statuses
+    let new = statuses
         .iter()
-        .filter(|s| s.status() == Status::WT_NEW && s.path().is_some())
-        .collect();
+        .filter(|s| s.status() == Status::WT_NEW && s.path().is_some());
 
     let mut back: Vec<u8> = Vec::new();
     let mut encoder = BzEncoder::new(&mut back, Compression::fast());
@@ -221,7 +220,7 @@ fn store() -> Result<()> {
     {
         let mut tar = Builder::new(&mut encoder);
 
-        for file in new.into_iter() {
+        for file in new {
             let mut fullpath = repo.path.clone();
             fullpath.push(file.path().unwrap());
             {
@@ -246,7 +245,7 @@ fn store() -> Result<()> {
 
     let dt: DateTime<Local> = Local::now();
     let fname = dt.format("%Y-%m-%dT%H%M%S.tar.bz2").to_string();
-    let mut savepath = data_dir.clone();
+    let mut savepath = data_dir;
     savepath.push(fname);
 
     let key = rand::thread_rng().gen::<[u8; 16]>();
@@ -269,7 +268,7 @@ fn store() -> Result<()> {
 
     let cr = Crate {
         date: time,
-        archive_path: PathBuf::from(savepath),
+        archive_path: savepath,
         file_list: stored_files
             .into_iter()
             .map(|f| f.path().unwrap().to_string())
