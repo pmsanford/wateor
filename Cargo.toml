@@ -14,3 +14,5 @@ directories = "3.0.2"
 chrono = "0.4.19"
 sled = "0.34.6"
 bincode = { version = "2.0.0-alpha.1" }
+openssl = "0.10.34"
+rand = "0.8.3"
