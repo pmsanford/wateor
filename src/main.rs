@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Error, Result};
 use bincode::{config::Configuration, decode_from_slice, encode_to_vec, Decode, Encode};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
 use chrono::{DateTime, Local, NaiveDateTime};
@@ -22,6 +22,7 @@ use tar::{Archive, Builder};
 
 static PRIV_KEY_NAME: &str = "key.pem";
 static PUB_KEY_NAME: &str = "pub.pem";
+static DB_FOLDER_NAME: &str = "wateor.db";
 
 struct Repo {
     repo: Repository,
@@ -29,7 +30,7 @@ struct Repo {
 }
 
 fn storage_location() -> Result<PathBuf> {
-    let bd = BaseDirs::new().unwrap();
+    let bd = BaseDirs::new().ok_or_else(|| Error::msg("Couldn't init base dirs"))?;
     let mut data_dir = PathBuf::from(bd.data_local_dir());
     data_dir.push("wateor");
     std::fs::create_dir_all(&data_dir)?;
@@ -38,7 +39,7 @@ fn storage_location() -> Result<PathBuf> {
 
 fn open_db() -> Result<Db> {
     let data_dir = storage_location()?;
-    Ok(sled::open(data_dir.join("wateor.db"))?)
+    Ok(sled::open(data_dir.join(DB_FOLDER_NAME))?)
 }
 
 fn main() -> Result<()> {
@@ -58,16 +59,26 @@ fn main() -> Result<()> {
     if args[1] == "init" {
         init()?;
     }
+    if args[1] == "reinit" {
+        let data_dir = storage_location()?;
+        let _ = std::fs::remove_dir_all(data_dir.join(DB_FOLDER_NAME));
+        let _ = std::fs::remove_file(data_dir.join("key.pem"));
+        let _ = std::fs::remove_file(data_dir.join("pub.pem"));
+        for entry in walkdir::WalkDir::new(&data_dir).max_depth(1) {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().map(|ext| ext == "bz2") == Some(true) {
+                std::fs::remove_file(path)?;
+            }
+        }
+        init()?;
+    }
 
     Ok(())
 }
 
 fn prompt(prompt: &str) -> Result<String> {
-    print!("{}", prompt);
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    Ok(input)
+    Ok(rpassword::read_password_from_tty(Some(prompt))?)
 }
 
 fn init() -> Result<()> {
@@ -75,6 +86,10 @@ fn init() -> Result<()> {
     println!("Initialized db");
     let rsa = Rsa::generate(2048)?;
     let pass = prompt("Passcode for key: ")?;
+    let confirm = prompt("Confirm password: ")?;
+    if pass != confirm {
+        bail!("Passwords don't match");
+    }
     let private_key: Vec<u8> =
         rsa.private_key_to_pem_passphrase(Cipher::aes_128_cbc(), pass.as_bytes())?;
     let data_dir = storage_location()?;
@@ -109,17 +124,13 @@ fn list() -> Result<()> {
 fn restore() -> Result<()> {
     let repo = find_repo()?;
     let db = open_db()?;
-    let latest = db.last()?;
+    let latest = db.last()?.ok_or_else(|| Error::msg("No archives found"))?;
     let pass = prompt("Passcode for key: ")?;
     let priv_key = get_priv_key(&pass)?;
 
-    if latest.is_none() {
-        bail!("No archives found");
-    }
-    let latest = latest.unwrap();
     let cr: Crate = decode_from_slice(&latest.1, Configuration::standard())?;
 
-    let mut decryption_key = vec![0u8; priv_key.size() as usize];
+    let mut decryption_key = vec![0_u8; priv_key.size() as usize];
     println!("Decryption key size: {}", decryption_key.len());
     priv_key.private_decrypt(&cr.decryption_key, &mut decryption_key, Padding::PKCS1)?;
 
@@ -139,7 +150,7 @@ fn restore() -> Result<()> {
     let mut non_current = statuses
         .iter()
         .filter(|s| s.status() != Status::CURRENT && s.path().is_some())
-        .map(|s| PathBuf::from(s.path().unwrap()));
+        .map(|s| PathBuf::from(s.path().expect("We just filtered for this!")));
 
     println!("Restoring to {:#?}", repo.path);
     for entry in tar.entries()? {
@@ -158,13 +169,11 @@ fn restore() -> Result<()> {
 
 fn find_repo() -> Result<Repo> {
     let repo = Repository::discover(".")?;
-    let basepath = repo.workdir();
+    let basepath = repo
+        .workdir()
+        .ok_or_else(|| Error::msg("Missing a work dir path. Is this a bare repo?"))?;
 
-    if basepath.is_none() {
-        bail!("Missing a work dir path. Is this a bare repo?");
-    }
-
-    let path = PathBuf::from(basepath.unwrap());
+    let path = PathBuf::from(basepath);
 
     Ok(Repo { repo, path })
 }
@@ -220,19 +229,17 @@ fn store() -> Result<()> {
 
         for file in new {
             let mut fullpath = repo.path.clone();
-            fullpath.push(file.path().unwrap());
+            let file_path = file.path().expect("We filtered for this");
+            fullpath.push(file_path);
             {
                 let f = File::open(&fullpath)?;
                 let size = f.metadata()?.len();
                 if size > 1024 * 1024 {
-                    println!(
-                        "File {} is greater than 1mb, skipping",
-                        file.path().unwrap()
-                    );
+                    println!("File {} is greater than 1mb, skipping", file_path);
                     continue;
                 }
             }
-            tar.append_path_with_name(fullpath, file.path().unwrap())?;
+            tar.append_path_with_name(fullpath, file_path)?;
             stored_files.push(file);
         }
 
@@ -255,8 +262,8 @@ fn store() -> Result<()> {
 
     file.write_all(&encrypted)?;
 
-    for file in stored_files.iter() {
-        std::fs::remove_file(file.path().unwrap())?;
+    for file in &stored_files {
+        std::fs::remove_file(file.path().expect("We filtered for this"))?;
     }
 
     println!("Encrypting key");
@@ -269,7 +276,7 @@ fn store() -> Result<()> {
         archive_path: savepath,
         file_list: stored_files
             .into_iter()
-            .map(|f| f.path().unwrap().to_string())
+            .map(|f| f.path().expect("We filtered for this").to_string())
             .collect(),
         decryption_key: encrypted_key,
         iv,
