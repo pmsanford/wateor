@@ -2,7 +2,7 @@ use std::{
     env,
     fs::File,
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Error, Result};
@@ -29,6 +29,32 @@ struct Repo {
     path: PathBuf,
 }
 
+impl Repo {
+    fn dirty_files(&self) -> Result<Vec<PathBuf>> {
+        Ok(self
+            .repo
+            .statuses(None)?
+            .iter()
+            .filter_map(|s| match (s.status(), s.path()) {
+                (Status::CURRENT, _) => None,
+                (_, Some(p)) => Some(PathBuf::from(p)),
+                _ => None,
+            })
+            .collect())
+    }
+    fn new_files(&self) -> Result<Vec<String>> {
+        Ok(self
+            .repo
+            .statuses(None)?
+            .iter()
+            .filter_map(|s| match (s.status(), s.path()) {
+                (Status::WT_NEW, Some(p)) => Some(p.to_string()),
+                _ => None,
+            })
+            .collect())
+    }
+}
+
 fn storage_location() -> Result<PathBuf> {
     let bd = BaseDirs::new().ok_or_else(|| Error::msg("Couldn't init base dirs"))?;
     let mut data_dir = PathBuf::from(bd.data_local_dir());
@@ -42,7 +68,7 @@ fn open_db() -> Result<Db> {
     Ok(sled::open(data_dir.join(DB_FOLDER_NAME))?)
 }
 
-fn decode_crate(db_item: (IVec, IVec)) -> Result<Crate> {
+fn decode_crate(db_item: &(IVec, IVec)) -> Result<Crate> {
     Ok(decode_from_slice(&db_item.1, Configuration::standard())?)
 }
 
@@ -68,14 +94,14 @@ fn main() -> Result<()> {
             "list" => list(),
             "clean" => {
                 let db = open_db()?;
-                for archive in db.iter().map(|r| r.map(decode_crate)) {
+                for archive in db.iter().map(|r| r.map(|i| decode_crate(&i))) {
                     let archive = archive??;
                     std::fs::remove_file(&archive.archive_path)?;
                 }
                 let data_dir = storage_location()?;
-                let _ = std::fs::remove_dir_all(data_dir.join(DB_FOLDER_NAME));
-                let _ = std::fs::remove_file(data_dir.join("key.pem"));
-                let _ = std::fs::remove_file(data_dir.join("pub.pem"));
+                std::fs::remove_dir_all(data_dir.join(DB_FOLDER_NAME))?;
+                std::fs::remove_file(data_dir.join("key.pem"))?;
+                std::fs::remove_file(data_dir.join("pub.pem"))?;
                 Ok(())
             }
             _ => {
@@ -122,7 +148,7 @@ fn list() -> Result<()> {
 
     for bccr in db.iter() {
         let cr: Crate = decode_from_slice(&bccr?.1, Configuration::standard())?;
-        let dt = Local.timestamp(cr.date as i64, 0);
+        let dt = Local.timestamp(cr.timestamp as i64, 0);
         println!("{}:", dt);
         println!("\t{} ({})", cr.branch, cr.commit_id);
         for file in cr.file_list {
@@ -131,6 +157,21 @@ fn list() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn decrypt_archive(priv_key: &Rsa<Private>, cr: &Crate) -> Result<Vec<u8>> {
+    let mut decryption_key = vec![0_u8; priv_key.size() as usize];
+    priv_key.private_decrypt(&cr.decryption_key, &mut decryption_key, Padding::PKCS1)?;
+
+    let mut file = File::open(&cr.archive_path)?;
+    let mut encrypted = Vec::new();
+    file.read_to_end(&mut encrypted)?;
+    Ok(decrypt(
+        Cipher::aes_128_cbc(),
+        &decryption_key[..16],
+        Some(&cr.iv),
+        &encrypted,
+    )?)
 }
 
 fn restore() -> Result<()> {
@@ -142,34 +183,19 @@ fn restore() -> Result<()> {
 
     let cr: Crate = decode_from_slice(&latest.1, Configuration::standard())?;
 
-    let mut decryption_key = vec![0_u8; priv_key.size() as usize];
-    println!("Decryption key size: {}", decryption_key.len());
-    priv_key.private_decrypt(&cr.decryption_key, &mut decryption_key, Padding::PKCS1)?;
+    let unencrypted = decrypt_archive(&priv_key, &cr)?;
 
-    let mut file = File::open(cr.archive_path)?;
-    let mut encrypted = Vec::new();
-    file.read_to_end(&mut encrypted)?;
-    let unencrypted = decrypt(
-        Cipher::aes_128_cbc(),
-        &decryption_key[..16],
-        Some(&cr.iv),
-        &encrypted,
-    )?;
     let decoder = BzDecoder::new(&*unencrypted);
     let mut tar = Archive::new(decoder);
 
-    let statuses = repo.repo.statuses(None)?;
-    let mut non_current = statuses
-        .iter()
-        .filter(|s| s.status() != Status::CURRENT && s.path().is_some())
-        .map(|s| PathBuf::from(s.path().expect("We just filtered for this!")));
+    let non_current = repo.dirty_files()?;
 
     println!("Restoring to {:#?}", repo.path);
     for entry in tar.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
-        if non_current.any(|p| p == path) {
-            println!("{:#?} already in repo and dirty", path);
+        if non_current.iter().any(|p| p == &*path) {
+            println!("{:#?} already in repo and dirty, skipping restore", path);
             continue;
         }
         println!("Unpacking {:#?}", path);
@@ -192,7 +218,7 @@ fn find_repo() -> Result<Repo> {
 
 #[derive(Encode, Decode)]
 struct Crate {
-    date: u64,
+    timestamp: u64,
     archive_path: PathBuf,
     repo_path: PathBuf,
     branch: String,
@@ -200,6 +226,34 @@ struct Crate {
     file_list: Vec<String>,
     decryption_key: Vec<u8>,
     iv: [u8; 16],
+}
+
+impl Crate {
+    fn new(
+        timestamp: u64,
+        archive_path: PathBuf,
+        repo: &Repository,
+        file_list: Vec<String>,
+        decryption_key: Vec<u8>,
+        iv: [u8; 16],
+    ) -> Result<Self> {
+        let head = repo.head()?;
+        let commit = head.peel_to_commit()?;
+
+        Ok(Crate {
+            timestamp,
+            archive_path,
+            repo_path: PathBuf::from(repo.path()),
+            branch: head
+                .shorthand()
+                .ok_or_else(|| Error::msg("Branch has non-utf8 shorthand"))?
+                .to_string(),
+            commit_id: commit.id().to_string(),
+            file_list,
+            decryption_key,
+            iv,
+        })
+    }
 }
 
 fn get_priv_key(pass: &str) -> Result<Rsa<Private>> {
@@ -219,6 +273,67 @@ fn get_pub_key() -> Result<Rsa<Public>> {
     Ok(Rsa::public_key_from_pem(&key_cont)?)
 }
 
+struct ArchiveResult {
+    archive_data: Vec<u8>,
+    file_list: Vec<String>,
+}
+
+fn archive_files(base_path: &Path, paths: Vec<String>) -> Result<ArchiveResult> {
+    let mut back: Vec<u8> = Vec::new();
+    let mut encoder = BzEncoder::new(&mut back, Compression::default());
+
+    let mut stored_files = Vec::new();
+
+    {
+        let mut tar = Builder::new(&mut encoder);
+
+        for path in paths {
+            let file_path = base_path.join(&path);
+            {
+                let f = File::open(&file_path)?;
+                let size = f.metadata()?.len();
+                if size > 1024 * 1024 {
+                    println!("File {} is greater than 1mb, skipping", path);
+                    continue;
+                }
+            }
+            tar.append_path_with_name(file_path, &path)?;
+            stored_files.push(path);
+        }
+
+        tar.finish()?;
+    }
+
+    encoder.finish()?;
+
+    Ok(ArchiveResult {
+        archive_data: back,
+        file_list: stored_files,
+    })
+}
+
+struct EncryptResult {
+    encrypted_archive_data: Vec<u8>,
+    encrypted_key: Vec<u8>,
+    iv: [u8; 16],
+}
+
+fn encrypt_archive(pub_key: &Rsa<Public>, unencrypted_data: &[u8]) -> Result<EncryptResult> {
+    let key = rand::thread_rng().gen::<[u8; 16]>();
+    let iv = rand::thread_rng().gen::<[u8; 16]>();
+
+    let encrypted = encrypt(Cipher::aes_128_cbc(), &key, Some(&iv), unencrypted_data)?;
+
+    let mut encrypted_key = vec![0; pub_key.size() as usize];
+    pub_key.public_encrypt(&key, &mut encrypted_key, Padding::PKCS1)?;
+
+    Ok(EncryptResult {
+        encrypted_archive_data: encrypted,
+        encrypted_key,
+        iv,
+    })
+}
+
 fn store() -> Result<()> {
     let data_dir = storage_location()?;
     let repo = find_repo()?;
@@ -228,88 +343,35 @@ fn store() -> Result<()> {
     let db = open_db()?;
     let pub_key = get_pub_key()?;
 
-    let statuses = repo.repo.statuses(None)?;
+    let new_paths = repo.new_files()?;
 
-    let new = statuses
-        .iter()
-        .filter(|s| s.status() == Status::WT_NEW && s.path().is_some());
-
-    let mut back: Vec<u8> = Vec::new();
-    let mut encoder = BzEncoder::new(&mut back, Compression::fast());
-
-    let mut stored_files = Vec::new();
-
-    {
-        let mut tar = Builder::new(&mut encoder);
-
-        for file in new {
-            let mut fullpath = repo.path.clone();
-            let file_path = file.path().expect("We filtered for this");
-            fullpath.push(file_path);
-            {
-                let f = File::open(&fullpath)?;
-                let size = f.metadata()?.len();
-                if size > 1024 * 1024 {
-                    println!("File {} is greater than 1mb, skipping", file_path);
-                    continue;
-                }
-            }
-            tar.append_path_with_name(fullpath, file_path)?;
-            stored_files.push(file);
-        }
-
-        tar.finish()?;
-    }
-
-    encoder.finish()?;
+    let archive = archive_files(&repo.path, new_paths)?;
+    let encrypted = encrypt_archive(&pub_key, &archive.archive_data)?;
 
     let dt: DateTime<Local> = Local::now();
-    let fname = dt.format("%Y-%m-%dT%H%M%S.tar.bz2").to_string();
-    let mut savepath = data_dir;
-    savepath.push(fname);
+    let file_name = dt.format("%Y-%m-%dT%H%M%S.tar.bz2").to_string();
+    let save_path = data_dir.join(file_name);
+    let mut file = File::create(&save_path)?;
 
-    let key = rand::thread_rng().gen::<[u8; 16]>();
-    let iv = rand::thread_rng().gen::<[u8; 16]>();
+    file.write_all(&encrypted.encrypted_archive_data)?;
 
-    let mut file = File::create(savepath.clone())?;
-    println!("Encrypting archive");
-    let encrypted = encrypt(Cipher::aes_128_cbc(), &key, Some(&iv), &back)?;
-
-    file.write_all(&encrypted)?;
-
-    for file in &stored_files {
-        std::fs::remove_file(file.path().expect("We filtered for this"))?;
-    }
-
-    println!("Encrypting key");
-    let mut encrypted_key = vec![0; pub_key.size() as usize];
-    pub_key.public_encrypt(&key, &mut encrypted_key, Padding::PKCS1)?;
-    println!("Encrypted size: {}", encrypted_key.len());
-
-    let head = repo.repo.head()?;
-    let commit = head.peel_to_commit()?;
-
-    let cr = Crate {
-        date: time,
-        archive_path: savepath,
-        repo_path: PathBuf::from(repo.repo.path()),
-        branch: head
-            .shorthand()
-            .ok_or_else(|| Error::msg("Branch has non-utf8 shorthand"))?
-            .to_string(),
-        commit_id: commit.id().to_string(),
-        file_list: stored_files
-            .into_iter()
-            .map(|f| f.path().expect("We filtered for this").to_string())
-            .collect(),
-        decryption_key: encrypted_key,
-        iv,
-    };
+    let cr = Crate::new(
+        time,
+        save_path,
+        &repo.repo,
+        archive.file_list.clone(),
+        encrypted.encrypted_key,
+        encrypted.iv,
+    )?;
 
     db.insert(
         time.to_be_bytes(),
         encode_to_vec(cr, Configuration::standard())?,
     )?;
+
+    for file in &archive.file_list {
+        std::fs::remove_file(file)?;
+    }
 
     Ok(())
 }
