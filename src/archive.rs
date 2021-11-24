@@ -55,9 +55,8 @@ impl Archiver {
             .statuses(None)?
             .iter()
             .filter_map(|s| match (s.status(), s.path()) {
-                (Status::CURRENT, _) => None,
+                (Status::CURRENT, _) | (_, None) => None,
                 (_, Some(p)) => Some(PathBuf::from(p)),
-                _ => None,
             })
             .collect())
     }
