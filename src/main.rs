@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{bail, Error, Result};
+use anyhow::{bail, Context, Error, Result};
 use bincode::{config::Configuration, decode_from_slice, encode_to_vec, Decode, Encode};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
 use chrono::{DateTime, Local, TimeZone};
@@ -59,7 +59,12 @@ fn storage_location() -> Result<PathBuf> {
     let bd = BaseDirs::new().ok_or_else(|| Error::msg("Couldn't init base dirs"))?;
     let mut data_dir = PathBuf::from(bd.data_local_dir());
     data_dir.push("wateor");
-    std::fs::create_dir_all(&data_dir)?;
+    std::fs::create_dir_all(&data_dir).with_context(|| {
+        format!(
+            "Failed to create data directory at {}",
+            data_dir.to_string_lossy()
+        )
+    })?;
     Ok(data_dir)
 }
 
@@ -96,12 +101,24 @@ fn main() -> Result<()> {
                 let db = open_db()?;
                 for archive in db.iter().map(|r| r.map(|i| decode_crate(&i))) {
                     let archive = archive??;
-                    std::fs::remove_file(&archive.archive_path)?;
+                    std::fs::remove_file(&archive.archive_path).with_context(|| {
+                        format!(
+                            "Couldn't remove file at {}",
+                            archive.archive_path.to_string_lossy()
+                        )
+                    })?;
                 }
                 let data_dir = storage_location()?;
-                std::fs::remove_dir_all(data_dir.join(DB_FOLDER_NAME))?;
-                std::fs::remove_file(data_dir.join("key.pem"))?;
-                std::fs::remove_file(data_dir.join("pub.pem"))?;
+                println!(
+                    "Removing contents of data directory at {}",
+                    data_dir.to_string_lossy()
+                );
+                std::fs::remove_dir_all(data_dir.join(DB_FOLDER_NAME))
+                    .context("Couldn't remove wateor db folder")?;
+                std::fs::remove_file(data_dir.join("key.pem"))
+                    .context("Couldn't remove private key file")?;
+                std::fs::remove_file(data_dir.join("pub.pem"))
+                    .context("Couldn't remove public key file")?;
                 Ok(())
             }
             _ => {
@@ -133,11 +150,14 @@ fn init() -> Result<()> {
     let key_path = data_dir.join(PRIV_KEY_NAME);
     let mut pkey = File::create(&key_path)?;
     let public_key = rsa.public_key_to_pem()?;
-    pkey.write_all(&private_key)?;
+    pkey.write_all(&private_key)
+        .context("Couldn't write private key file")?;
     println!("Created private key at {:#?}", key_path);
     let pub_path = data_dir.join(PUB_KEY_NAME);
     let mut public = File::create(&pub_path)?;
-    public.write_all(&public_key)?;
+    public
+        .write_all(&public_key)
+        .context("Couldn't write public key file")?;
     println!("Created public key at {:#?}", pub_path);
 
     Ok(())
@@ -147,7 +167,8 @@ fn list() -> Result<()> {
     let db = open_db()?;
 
     for bccr in db.iter() {
-        let cr: Crate = decode_from_slice(&bccr?.1, Configuration::standard())?;
+        let cr: Crate = decode_from_slice(&bccr?.1, Configuration::standard())
+            .context("Failed to decode crate definition")?;
         let dt = Local.timestamp(cr.timestamp as i64, 0);
         println!("{}:", dt);
         println!("\t{} ({})", cr.branch, cr.commit_id);
@@ -161,9 +182,16 @@ fn list() -> Result<()> {
 
 fn decrypt_archive(priv_key: &Rsa<Private>, cr: &Crate) -> Result<Vec<u8>> {
     let mut decryption_key = vec![0_u8; priv_key.size() as usize];
-    priv_key.private_decrypt(&cr.decryption_key, &mut decryption_key, Padding::PKCS1)?;
+    priv_key
+        .private_decrypt(&cr.decryption_key, &mut decryption_key, Padding::PKCS1)
+        .context("Failed to decrypt archive encryption key")?;
 
-    let mut file = File::open(&cr.archive_path)?;
+    let mut file = File::open(&cr.archive_path).with_context(|| {
+        format!(
+            "Failed to open archive file at {}",
+            cr.archive_path.to_string_lossy()
+        )
+    })?;
     let mut encrypted = Vec::new();
     file.read_to_end(&mut encrypted)?;
     Ok(decrypt(
@@ -171,17 +199,27 @@ fn decrypt_archive(priv_key: &Rsa<Private>, cr: &Crate) -> Result<Vec<u8>> {
         &decryption_key[..16],
         Some(&cr.iv),
         &encrypted,
-    )?)
+    )
+    .with_context(|| {
+        format!(
+            "Failed to decrypt archive at {}",
+            cr.archive_path.to_string_lossy()
+        )
+    })?)
 }
 
 fn restore() -> Result<()> {
     let repo = find_repo()?;
     let db = open_db()?;
-    let latest = db.last()?.ok_or_else(|| Error::msg("No archives found"))?;
+    let latest = db
+        .last()
+        .context("Couldn't find latest crate")?
+        .ok_or_else(|| Error::msg("No archives found"))?;
     let pass = prompt("Passcode for key: ")?;
     let priv_key = get_priv_key(&pass)?;
 
-    let cr: Crate = decode_from_slice(&latest.1, Configuration::standard())?;
+    let cr: Crate = decode_from_slice(&latest.1, Configuration::standard())
+        .context("Failed to decode crate")?;
 
     let unencrypted = decrypt_archive(&priv_key, &cr)?;
 
@@ -191,7 +229,10 @@ fn restore() -> Result<()> {
     let non_current = repo.dirty_files()?;
 
     println!("Restoring to {:#?}", repo.path);
-    for entry in tar.entries()? {
+    for entry in tar
+        .entries()
+        .context("Failed to read entries from archive")?
+    {
         let mut entry = entry?;
         let path = entry.path()?;
         if non_current.iter().any(|p| p == &*path) {
@@ -199,14 +240,17 @@ fn restore() -> Result<()> {
             continue;
         }
         println!("Unpacking {:#?}", path);
-        entry.unpack_in(&repo.path)?;
+        entry
+            .unpack_in(&repo.path)
+            .context("Couldn't unpack entry from archive")?;
     }
 
     Ok(())
 }
 
 fn find_repo() -> Result<Repo> {
-    let repo = Repository::discover(".")?;
+    let repo =
+        Repository::discover(".").context("Couldn't find a git repo from the current directory")?;
     let basepath = repo
         .workdir()
         .ok_or_else(|| Error::msg("Missing a work dir path. Is this a bare repo?"))?;
@@ -259,18 +303,22 @@ impl Crate {
 fn get_priv_key(pass: &str) -> Result<Rsa<Private>> {
     let key_path = storage_location()?.join(PRIV_KEY_NAME);
     let mut key_cont = Vec::new();
-    File::open(key_path)?.read_to_end(&mut key_cont)?;
-    Ok(Rsa::private_key_from_pem_passphrase(
-        &key_cont,
-        pass.as_bytes(),
-    )?)
+    File::open(key_path)
+        .context("Couldn't open private key file")?
+        .read_to_end(&mut key_cont)?;
+    Ok(
+        Rsa::private_key_from_pem_passphrase(&key_cont, pass.as_bytes())
+            .context("Couldn't parse private key")?,
+    )
 }
 
 fn get_pub_key() -> Result<Rsa<Public>> {
     let key_path = storage_location()?.join(PUB_KEY_NAME);
     let mut key_cont = Vec::new();
-    File::open(key_path)?.read_to_end(&mut key_cont)?;
-    Ok(Rsa::public_key_from_pem(&key_cont)?)
+    File::open(key_path)
+        .context("Couldn't open public key file")?
+        .read_to_end(&mut key_cont)?;
+    Ok(Rsa::public_key_from_pem(&key_cont).context("Couldn't parse public key")?)
 }
 
 struct ArchiveResult {
@@ -290,7 +338,9 @@ fn archive_files(base_path: &Path, paths: Vec<String>) -> Result<ArchiveResult> 
         for path in paths {
             let file_path = base_path.join(&path);
             {
-                let f = File::open(&file_path)?;
+                let f = File::open(&file_path).with_context(|| {
+                    format!("Couldn't open file at {}", file_path.to_string_lossy())
+                })?;
                 let size = f.metadata()?.len();
                 if size > 1024 * 1024 {
                     println!("File {} is greater than 1mb, skipping", path);
@@ -322,10 +372,13 @@ fn encrypt_archive(pub_key: &Rsa<Public>, unencrypted_data: &[u8]) -> Result<Enc
     let key = rand::thread_rng().gen::<[u8; 16]>();
     let iv = rand::thread_rng().gen::<[u8; 16]>();
 
-    let encrypted = encrypt(Cipher::aes_128_cbc(), &key, Some(&iv), unencrypted_data)?;
+    let encrypted = encrypt(Cipher::aes_128_cbc(), &key, Some(&iv), unencrypted_data)
+        .context("Failed to encrypt archive")?;
 
     let mut encrypted_key = vec![0; pub_key.size() as usize];
-    pub_key.public_encrypt(&key, &mut encrypted_key, Padding::PKCS1)?;
+    pub_key
+        .public_encrypt(&key, &mut encrypted_key, Padding::PKCS1)
+        .context("Failed to encrypt archive encryption key")?;
 
     Ok(EncryptResult {
         encrypted_archive_data: encrypted,
@@ -351,7 +404,12 @@ fn store() -> Result<()> {
     let dt: DateTime<Local> = Local::now();
     let file_name = dt.format("%Y-%m-%dT%H%M%S.tar.bz2").to_string();
     let save_path = data_dir.join(file_name);
-    let mut file = File::create(&save_path)?;
+    let mut file = File::create(&save_path).with_context(|| {
+        format!(
+            "Failed to create archive file at {}",
+            save_path.to_string_lossy()
+        )
+    })?;
 
     file.write_all(&encrypted.encrypted_archive_data)?;
 
@@ -370,7 +428,7 @@ fn store() -> Result<()> {
     )?;
 
     for file in &archive.file_list {
-        std::fs::remove_file(file)?;
+        std::fs::remove_file(file).with_context(|| format!("Failed to remove file at {}", file))?;
     }
 
     Ok(())
