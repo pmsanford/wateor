@@ -1,4 +1,5 @@
 use anyhow::{Error, Result};
+use config::{Config, Environment, File};
 use directories::BaseDirs;
 use std::path::PathBuf;
 
@@ -8,18 +9,43 @@ pub struct WateorConfig {
     pub config_file: PathBuf,
 }
 
-impl WateorConfig {
-    pub fn from_config() -> Self {
-        Self {
-            data_dir: storage_location().unwrap(),
-            config_file: PathBuf::new(),
-        }
-    }
+fn get_default_config_path() -> Result<PathBuf> {
+    let bd = BaseDirs::new().ok_or_else(|| Error::msg("Couldn't init base dirs"))?;
+    let mut config_dir = PathBuf::from(bd.config_dir());
+    config_dir.push("wateor");
+    config_dir.push("config.yaml");
+    Ok(config_dir)
 }
 
-fn storage_location() -> Result<PathBuf> {
+fn get_default_data_dir() -> Result<PathBuf> {
     let bd = BaseDirs::new().ok_or_else(|| Error::msg("Couldn't init base dirs"))?;
     let mut data_dir = PathBuf::from(bd.data_local_dir());
     data_dir.push("wateor");
+
     Ok(data_dir)
+}
+
+impl WateorConfig {
+    pub fn read_config() -> Result<Self> {
+        let config_path = get_default_config_path()?;
+        WateorConfig::read_config_from(config_path)
+    }
+
+    pub fn read_config_from(config_path: PathBuf) -> Result<Self> {
+        let mut settings = Config::default();
+        settings
+            .merge(File::from(config_path.clone()).required(false))?
+            .merge(Environment::with_prefix("WATEOR"))?;
+
+        let data_dir: PathBuf = if let Ok(data_dir) = settings.get("data_dir") {
+            data_dir
+        } else {
+            get_default_data_dir()?
+        };
+
+        Ok(Self {
+            data_dir,
+            config_file: config_path,
+        })
+    }
 }

@@ -14,7 +14,7 @@ use sled::{Db, IVec};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let config = WateorConfig::from_config();
+    let config = WateorConfig::read_config().context("Couldn't read config file")?;
     if args.len() < 2 {
         bail!("Need a command");
     }
