@@ -670,6 +670,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "size-display"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9df415f09e1c4d4f58cd0cd08b2f5385bc07cf1878e7a7846abc2225fa00e1e1"
+
+[[package]]
 name = "sled"
 version = "0.34.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -813,6 +819,7 @@ dependencies = [
  "openssl",
  "rand",
  "rpassword",
+ "size-display",
  "sled",
  "tar",
  "walkdir",

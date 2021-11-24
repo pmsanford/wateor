@@ -80,7 +80,7 @@ impl Archiver {
 
         let new_paths = self.new_files()?;
 
-        let archive = archive_files(&self.repo_path, new_paths)?;
+        let archive = archive_files(&self.repo_path, new_paths, self.config.max_file_size_bytes)?;
         let encrypted = self.crypto.encrypt_archive(&archive.archive_data)?;
 
         let dt: DateTime<Local> = Local::now();
@@ -218,7 +218,11 @@ struct ArchiveResult {
     file_list: Vec<String>,
 }
 
-fn archive_files(base_path: &Path, paths: Vec<String>) -> Result<ArchiveResult> {
+fn archive_files(
+    base_path: &Path,
+    paths: Vec<String>,
+    max_file_size_bytes: u64,
+) -> Result<ArchiveResult> {
     let mut back: Vec<u8> = Vec::new();
     let mut encoder = BzEncoder::new(&mut back, Compression::default());
 
@@ -234,8 +238,12 @@ fn archive_files(base_path: &Path, paths: Vec<String>) -> Result<ArchiveResult> 
                     format!("Couldn't open file at {}", file_path.to_string_lossy())
                 })?;
                 let size = f.metadata()?.len();
-                if size > 1024 * 1024 {
-                    println!("File {} is greater than 1mb, skipping", path);
+                if size > max_file_size_bytes {
+                    println!(
+                        "File {} is greater than {}, skipping",
+                        path,
+                        size_display::Size(max_file_size_bytes)
+                    );
                     continue;
                 }
             }

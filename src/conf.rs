@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct WateorConfig {
     pub data_dir: PathBuf,
     pub config_file: PathBuf,
+    pub max_file_size_bytes: u64,
 }
 
 fn get_default_config_path() -> Result<PathBuf> {
@@ -43,9 +44,12 @@ impl WateorConfig {
             get_default_data_dir()?
         };
 
+        let max_file_size_bytes = settings.get("max_file_size_bytes").unwrap_or(1_048_576_u64);
+
         Ok(Self {
             data_dir,
             config_file: config_path,
+            max_file_size_bytes,
         })
     }
 }
