@@ -27,7 +27,10 @@ fn main() -> Result<()> {
         let archiver = Archiver::from_config(&config)?;
         match args[1].as_str() {
             "store" => archiver.store(),
-            "restore" => archiver.restore(),
+            "restore" => {
+                let index = args.get(2).and_then(|idx| idx.parse::<usize>().ok());
+                archiver.restore(index)
+            }
             "list" => archiver.list(),
             "clean" => {
                 std::mem::drop(archiver);

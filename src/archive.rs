@@ -117,26 +117,29 @@ impl Archiver {
     }
 
     pub fn list(&self) -> Result<()> {
-        for bccr in self.db.iter() {
+        for (idx, bccr) in self.db.iter().rev().enumerate() {
             let cr: Crate = decode_from_slice(&bccr?.1, Configuration::standard())
                 .context("Failed to decode crate definition")?;
             let dt = Local.timestamp(cr.timestamp as i64, 0);
-            println!("{}:", dt);
-            println!("\t{} ({})", cr.branch, cr.commit_id);
+            println!("{}. Date: {}", idx + 1, dt);
+            println!("   Branch: {} (commit id {})", cr.branch, cr.commit_id);
+            println!("   Files:");
             for file in cr.file_list {
-                println!("\t{}", file);
+                println!("     {}", file);
             }
         }
 
         Ok(())
     }
 
-    pub fn restore(&self) -> Result<()> {
+    pub fn restore(&self, index: Option<usize>) -> Result<()> {
+        let index = index.unwrap_or(1) - 1;
         let latest = self
             .db
-            .last()
-            .context("Couldn't find latest crate")?
-            .ok_or_else(|| Error::msg("No archives found"))?;
+            .iter()
+            .rev()
+            .nth(index)
+            .ok_or_else(|| Error::msg(format!("Archive {} not found", index)))??;
         let pass = prompt("Passcode for key: ")?;
 
         let cr: Crate = decode_from_slice(&latest.1, Configuration::standard())
