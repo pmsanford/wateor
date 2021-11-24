@@ -194,7 +194,7 @@ fn decrypt_archive(priv_key: &Rsa<Private>, cr: &Crate) -> Result<Vec<u8>> {
     })?;
     let mut encrypted = Vec::new();
     file.read_to_end(&mut encrypted)?;
-    Ok(decrypt(
+    decrypt(
         Cipher::aes_128_cbc(),
         &decryption_key[..16],
         Some(&cr.iv),
@@ -205,7 +205,7 @@ fn decrypt_archive(priv_key: &Rsa<Private>, cr: &Crate) -> Result<Vec<u8>> {
             "Failed to decrypt archive at {}",
             cr.archive_path.to_string_lossy()
         )
-    })?)
+    })
 }
 
 fn restore() -> Result<()> {
@@ -306,10 +306,8 @@ fn get_priv_key(pass: &str) -> Result<Rsa<Private>> {
     File::open(key_path)
         .context("Couldn't open private key file")?
         .read_to_end(&mut key_cont)?;
-    Ok(
-        Rsa::private_key_from_pem_passphrase(&key_cont, pass.as_bytes())
-            .context("Couldn't parse private key")?,
-    )
+    Rsa::private_key_from_pem_passphrase(&key_cont, pass.as_bytes())
+        .context("Couldn't parse private key")
 }
 
 fn get_pub_key() -> Result<Rsa<Public>> {
@@ -318,7 +316,7 @@ fn get_pub_key() -> Result<Rsa<Public>> {
     File::open(key_path)
         .context("Couldn't open public key file")?
         .read_to_end(&mut key_cont)?;
-    Ok(Rsa::public_key_from_pem(&key_cont).context("Couldn't parse public key")?)
+    Rsa::public_key_from_pem(&key_cont).context("Couldn't parse public key")
 }
 
 struct ArchiveResult {
