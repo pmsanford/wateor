@@ -8,7 +8,7 @@ use std::{
 use anyhow::{bail, Error, Result};
 use bincode::{config::Configuration, decode_from_slice, encode_to_vec, Decode, Encode};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
-use chrono::{DateTime, Local, NaiveDateTime};
+use chrono::{DateTime, Local, TimeZone};
 use directories::BaseDirs;
 use git2::{Repository, Status};
 use openssl::{
@@ -48,7 +48,7 @@ fn decode_crate(db_item: (IVec, IVec)) -> Result<Crate> {
 
 fn check_init() -> Result<bool> {
     let data_dir = storage_location()?;
-    Ok(data_dir.exists())
+    Ok(data_dir.join(DB_FOLDER_NAME).exists())
 }
 
 fn main() -> Result<()> {
@@ -122,8 +122,9 @@ fn list() -> Result<()> {
 
     for bccr in db.iter() {
         let cr: Crate = decode_from_slice(&bccr?.1, Configuration::standard())?;
-        let ndt = NaiveDateTime::from_timestamp(cr.date as i64, 0);
-        println!("{}:", ndt);
+        let dt = Local.timestamp(cr.date as i64, 0);
+        println!("{}:", dt);
+        println!("\t{} ({})", cr.branch, cr.commit_id);
         for file in cr.file_list {
             println!("\t{}", file);
         }
@@ -193,6 +194,9 @@ fn find_repo() -> Result<Repo> {
 struct Crate {
     date: u64,
     archive_path: PathBuf,
+    repo_path: PathBuf,
+    branch: String,
+    commit_id: String,
     file_list: Vec<String>,
     decryption_key: Vec<u8>,
     iv: [u8; 16],
@@ -282,9 +286,18 @@ fn store() -> Result<()> {
     pub_key.public_encrypt(&key, &mut encrypted_key, Padding::PKCS1)?;
     println!("Encrypted size: {}", encrypted_key.len());
 
+    let head = repo.repo.head()?;
+    let commit = head.peel_to_commit()?;
+
     let cr = Crate {
         date: time,
         archive_path: savepath,
+        repo_path: PathBuf::from(repo.repo.path()),
+        branch: head
+            .shorthand()
+            .ok_or_else(|| Error::msg("Branch has non-utf8 shorthand"))?
+            .to_string(),
+        commit_id: commit.id().to_string(),
         file_list: stored_files
             .into_iter()
             .map(|f| f.path().expect("We filtered for this").to_string())
