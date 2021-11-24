@@ -30,7 +30,8 @@ fn main() -> Result<()> {
             "restore" => archiver.restore(),
             "list" => archiver.list(),
             "clean" => {
-                let db = open_db(&config)?;
+                std::mem::drop(archiver);
+                let db = open_db(&config).context("Couldn't open database")?;
                 for archive in db.iter().map(|r| r.map(|i| decode_crate(&i))) {
                     let archive = archive??;
                     std::fs::remove_file(&archive.archive_path).with_context(|| {
