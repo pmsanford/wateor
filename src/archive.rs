@@ -98,6 +98,7 @@ impl Archiver {
             time,
             save_path,
             &self.repo,
+            &self.repo_path,
             archive.file_list.clone(),
             encrypted.encrypted_key,
             encrypted.iv,
@@ -116,10 +117,17 @@ impl Archiver {
         Ok(())
     }
 
-    pub fn list(&self) -> Result<()> {
-        for (idx, bccr) in self.db.iter().rev().enumerate() {
-            let cr: Crate = decode_from_slice(&bccr?.1, Configuration::standard())
-                .context("Failed to decode crate definition")?;
+    fn iter_repo_crates(&self) -> impl Iterator<Item = Crate> + '_ {
+        self.db
+            .iter()
+            .rev()
+            .map(|def| Ok(decode_from_slice(&def?.1, Configuration::standard())?))
+            .filter_map(|crr: Result<Crate>| crr.ok())
+            .filter(|cr| cr.repo_path == self.repo_path)
+    }
+
+    pub fn list(&self) {
+        for (idx, cr) in self.iter_repo_crates().enumerate() {
             let dt = Local.timestamp(cr.timestamp as i64, 0);
             println!("{}. Date: {}", idx + 1, dt);
             println!("   Branch: {} (commit id {})", cr.branch, cr.commit_id);
@@ -128,20 +136,13 @@ impl Archiver {
                 println!("     {}", file);
             }
         }
-
-        Ok(())
     }
 
     fn get_crate_description(&self, index: Option<usize>) -> Result<Crate> {
         let index = input_to_index(index);
-        let latest = self
-            .db
-            .iter()
-            .rev()
+        self.iter_repo_crates()
             .nth(index)
-            .ok_or_else(|| Error::msg(format!("Archive {} not found", index)))??;
-
-        decode_from_slice(&latest.1, Configuration::standard()).context("Failed to decode crate")
+            .ok_or_else(|| Error::msg(format!("Archive {} not found", index)))
     }
 
     pub fn remove(&self, index: Option<usize>) -> Result<()> {
@@ -214,6 +215,7 @@ impl Crate {
         timestamp: u64,
         archive_path: PathBuf,
         repo: &Repository,
+        repo_path: &Path,
         file_list: Vec<String>,
         decryption_key: Vec<u8>,
         iv: [u8; 16],
@@ -224,7 +226,7 @@ impl Crate {
         Ok(Crate {
             timestamp,
             archive_path,
-            repo_path: PathBuf::from(repo.path()),
+            repo_path: PathBuf::from(repo_path),
             branch: head
                 .shorthand()
                 .ok_or_else(|| Error::msg("Branch has non-utf8 shorthand"))?

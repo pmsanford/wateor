@@ -32,14 +32,26 @@ enum Command {
     /// Create the database and encryption keys used by wateor.
     Init,
     /// Gather, compress, and encrypt all untracked files in the repo.
+    #[clap(alias = "s")]
     Store,
     /// Decrypt an archive and restore its contents to their original locations
     /// in the repo.
     Restore(Restore),
     /// List archives managed by wateor.
+    #[clap(alias = "ls")]
     List,
+    /// Remove a specific archive managed by wateor without restoring.
+    #[clap(alias = "rm")]
+    Remove(Remove),
     /// Delete all data managed by wateor.
     Destroy,
+}
+
+#[derive(Parser, PartialEq)]
+struct Remove {
+    /// The index of the archive to remove. If not specified, the most recent
+    /// archive is removed. Find the index with the list command.
+    index: Option<usize>,
 }
 
 #[derive(Parser, PartialEq)]
@@ -72,7 +84,8 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Command::List => Archiver::from_config(&config)?.list()?,
+        Command::Remove(remove) => Archiver::from_config(&config)?.remove(remove.index)?,
+        Command::List => Archiver::from_config(&config)?.list(),
         Command::Destroy => destroy(&config)?,
     }
 
