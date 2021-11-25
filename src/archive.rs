@@ -17,8 +17,6 @@ use crate::{
     encryption::Crypto,
 };
 
-pub static DB_FOLDER_NAME: &str = "wateor.db";
-
 pub struct Archiver {
     crypto: Crypto,
     db: WateorDb,
