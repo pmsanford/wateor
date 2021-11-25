@@ -5,7 +5,7 @@ mod conf;
 mod encryption;
 
 use anyhow::{bail, Context, Result};
-use archive::{Archiver, Crate, DB_FOLDER_NAME};
+use archive::{Archiver, Crate, RestoreResult, DB_FOLDER_NAME};
 use bincode::{config::Configuration, decode_from_slice};
 use clap::Parser;
 use conf::WateorConfig;
@@ -47,6 +47,9 @@ struct Restore {
     /// The index of the archive to restore. If not specified, the most recent
     /// archive is restored. Find the index with the list command.
     index: Option<usize>,
+    /// Remove the archive after restoration.
+    #[clap(long, default_missing_value = "true")]
+    rm: Option<bool>,
 }
 
 fn main() -> Result<()> {
@@ -58,7 +61,17 @@ fn main() -> Result<()> {
     match opts.command {
         Command::Init => init(&config)?,
         Command::Store => Archiver::from_config(&config)?.store()?,
-        Command::Restore(restore) => Archiver::from_config(&config)?.restore(restore.index)?,
+        Command::Restore(restore) => {
+            let archiver = Archiver::from_config(&config)?;
+            let result = archiver.restore(restore.index)?;
+            if restore.rm.unwrap_or(config.remove_on_restore) {
+                if result == RestoreResult::Full {
+                    archiver.remove(restore.index)?;
+                } else {
+                    eprintln!("Some files could not be restored; archive not deleted");
+                }
+            }
+        }
         Command::List => Archiver::from_config(&config)?.list()?,
         Command::Destroy => destroy(&config)?,
     }

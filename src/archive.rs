@@ -132,19 +132,30 @@ impl Archiver {
         Ok(())
     }
 
-    pub fn restore(&self, index: Option<usize>) -> Result<()> {
-        let index = index.unwrap_or(1) - 1;
+    fn get_crate_description(&self, index: Option<usize>) -> Result<Crate> {
+        let index = input_to_index(index);
         let latest = self
             .db
             .iter()
             .rev()
             .nth(index)
             .ok_or_else(|| Error::msg(format!("Archive {} not found", index)))??;
+
+        decode_from_slice(&latest.1, Configuration::standard()).context("Failed to decode crate")
+    }
+
+    pub fn remove(&self, index: Option<usize>) -> Result<()> {
+        let cr = self.get_crate_description(index)?;
+        std::fs::remove_file(cr.archive_path)?;
+        self.db.remove(cr.timestamp.to_be_bytes())?;
+        Ok(())
+    }
+
+    pub fn restore(&self, index: Option<usize>) -> Result<RestoreResult> {
+        let cr = self.get_crate_description(index)?;
+        let mut result = RestoreResult::Full;
+
         let pass = prompt("Passcode for key: ")?;
-
-        let cr: Crate = decode_from_slice(&latest.1, Configuration::standard())
-            .context("Failed to decode crate")?;
-
         let unencrypted =
             self.crypto
                 .decrypt_archive(&pass, &cr.decryption_key, &cr.iv, &cr.archive_path)?;
@@ -163,6 +174,7 @@ impl Archiver {
             let path = entry.path()?;
             if non_current.iter().any(|p| p == &*path) {
                 println!("{:#?} already in repo and dirty, skipping restore", path);
+                result = RestoreResult::Partial;
                 continue;
             }
             println!("Unpacking {:#?}", path);
@@ -171,8 +183,18 @@ impl Archiver {
                 .context("Couldn't unpack entry from archive")?;
         }
 
-        Ok(())
+        Ok(result)
     }
+}
+
+#[derive(PartialEq)]
+pub enum RestoreResult {
+    Full,
+    Partial,
+}
+
+fn input_to_index(input: Option<usize>) -> usize {
+    input.unwrap_or(1) - 1
 }
 
 #[derive(Encode, Decode)]
