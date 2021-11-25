@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::{fs::File, io::Write, path::{Path, PathBuf}};
 
 use anyhow::{bail, Context, Error, Result};
 use bincode::{config::Configuration, decode_from_slice, Decode, Encode};
@@ -11,11 +7,7 @@ use git2::Repository;
 use openssl::{rsa::Rsa, symm::Cipher};
 use sled::Db;
 
-use crate::{
-    conf::WateorConfig,
-    encryption::{PRIV_KEY_NAME, PUB_KEY_NAME},
-    prompt,
-};
+use crate::{conf::WateorConfig, encryption::{Crypto, PRIV_KEY_NAME, PUB_KEY_NAME}, prompt};
 
 pub static DB_FOLDER_NAME: &str = "wateor.db";
 
@@ -160,5 +152,27 @@ pub fn destroy(config: &WateorConfig) -> Result<()> {
         .context("Couldn't remove private key file")?;
     std::fs::remove_file(config.data_dir.join(PUB_KEY_NAME))
         .context("Couldn't remove public key file")?;
+    Ok(())
+}
+
+pub fn input_to_index(input: Option<usize>) -> usize {
+    input.unwrap_or(1) - 1
+}
+
+
+pub fn decrypt(config: &WateorConfig, index: Option<usize>, destination: Option<PathBuf>) -> Result<()> {
+    let db = WateorDb::new(config)?;
+    let crypto = Crypto::from_config(config)?;
+    let index = input_to_index(index);
+    let cr = db.iter_crates().nth(index).ok_or_else(|| Error::msg(format!("Couldn't find archive {}", index)))?;
+    let archive_name = PathBuf::from(&cr.archive_path);
+    let archive_name = archive_name.file_name().ok_or_else(|| Error::msg("Corrupt archive path"))?;
+    let destination = destination.or_else(|| std::env::current_dir().ok()).ok_or_else(|| Error::msg("Couldn't find an appropriate destination"))?;
+    let mut destination = File::create(destination.join(archive_name))?;
+    let pass = prompt("Passcode for key: ")?;
+    let archive_data = crypto.decrypt_archive(&pass, &cr.decryption_key, &cr.iv, &cr.archive_path)?;
+    destination.write_all(&archive_data)?;
+
+
     Ok(())
 }

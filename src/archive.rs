@@ -11,7 +11,7 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use git2::{Repository, Status};
 use tar::{Archive, Builder};
 
-use crate::{conf::WateorConfig, prompt};
+use crate::{conf::WateorConfig, data::input_to_index, prompt};
 use crate::{
     data::{Crate, WateorDb},
     encryption::Crypto,
@@ -185,10 +185,6 @@ impl Archiver {
 pub enum RestoreResult {
     Full,
     Partial,
-}
-
-fn input_to_index(input: Option<usize>) -> usize {
-    input.unwrap_or(1) - 1
 }
 
 struct ArchiveResult {

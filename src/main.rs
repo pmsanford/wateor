@@ -10,7 +10,7 @@ use archive::{Archiver, RestoreResult};
 use clap::Parser;
 use conf::WateorConfig;
 
-use crate::data::{check_init, cleanup, destroy, init};
+use crate::data::{check_init, cleanup, decrypt, destroy, init};
 
 /// Clean up files strewn about your git repo quickly and securely, with
 /// the option to restore them later or consign them to an (encrypted)
@@ -36,6 +36,8 @@ enum Command {
     /// Decrypt an archive and restore its contents to their original locations
     /// in the repo.
     Restore(Restore),
+    /// Decrypt a single archive without extracting it.
+    Decrypt(Decrypt),
     /// List archives managed by wateor.
     #[clap(alias = "ls")]
     List,
@@ -50,6 +52,16 @@ enum Command {
     Config,
     /// Delete all data managed by wateor.
     Destroy,
+}
+
+#[derive(Parser, PartialEq)]
+struct Decrypt {
+    /// The index of the archive to decrypt. If not specified, the most recent
+    /// archive is removed. Find the index with the list command.
+    index: Option<usize>,
+    /// Directory to store the decrypted archive. If not specified, uses the
+    /// current working directory.
+    destination: Option<PathBuf>,
 }
 
 #[derive(Parser, PartialEq)]
@@ -95,6 +107,7 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Command::Decrypt(d) => decrypt(&config, d.index, d.destination)?,
         Command::Remove(remove) => Archiver::from_config(&config)?.remove(remove.index)?,
         Command::List => Archiver::from_config(&config)?.list(),
         Command::Cleanup(c) => cleanup(&config, c.older_than)?,
