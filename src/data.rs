@@ -35,8 +35,10 @@ impl WateorDb {
         self.db
             .iter()
             .rev()
-            .map(|def| Ok(decode_from_slice(&def?.1, Configuration::standard())?))
-            .filter_map(|crr: Result<Crate>| crr.ok())
+            .map::<Result<Crate>, _>(|def| {
+                Ok(decode_from_slice(&def?.1, Configuration::standard())?)
+            })
+            .filter_map(std::result::Result::ok)
     }
 
     pub fn delete(&self, cr: Crate) -> Result<()> {
