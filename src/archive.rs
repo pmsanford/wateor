@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Error, Result};
 use bincode::{config::Configuration, decode_from_slice, encode_to_vec, Decode, Encode};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use git2::{Repository, Status};
 use sled::Db;
 use tar::{Archive, Builder};
@@ -73,9 +73,7 @@ impl Archiver {
     }
 
     pub fn store(&self) -> Result<()> {
-        let time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
+        let time = Utc::now().timestamp();
 
         let new_paths = self.new_files()?;
 
@@ -128,7 +126,7 @@ impl Archiver {
 
     pub fn list(&self) {
         for (idx, cr) in self.iter_repo_crates().enumerate() {
-            let dt = Local.timestamp(cr.timestamp as i64, 0);
+            let dt = Local.timestamp(cr.timestamp, 0);
             println!("{}. Date: {}", idx + 1, dt);
             println!("   Branch: {} (commit id {})", cr.branch, cr.commit_id);
             println!("   Files:");
@@ -200,7 +198,7 @@ fn input_to_index(input: Option<usize>) -> usize {
 
 #[derive(Encode, Decode)]
 pub struct Crate {
-    pub timestamp: u64,
+    pub timestamp: i64,
     pub archive_path: PathBuf,
     pub repo_path: PathBuf,
     pub branch: String,
@@ -212,7 +210,7 @@ pub struct Crate {
 
 impl Crate {
     fn new(
-        timestamp: u64,
+        timestamp: i64,
         archive_path: PathBuf,
         repo: &Repository,
         repo_path: &Path,

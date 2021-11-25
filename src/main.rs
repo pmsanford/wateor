@@ -7,6 +7,7 @@ mod encryption;
 use anyhow::{bail, Context, Result};
 use archive::{Archiver, Crate, RestoreResult, DB_FOLDER_NAME};
 use bincode::{config::Configuration, decode_from_slice};
+use chrono::{Duration, Utc};
 use clap::Parser;
 use conf::WateorConfig;
 use encryption::{PRIV_KEY_NAME, PUB_KEY_NAME};
@@ -43,8 +44,16 @@ enum Command {
     /// Remove a specific archive managed by wateor without restoring.
     #[clap(alias = "rm")]
     Remove(Remove),
+    /// Remove archives older than a certain number of days.
+    Cleanup(Cleanup),
     /// Delete all data managed by wateor.
     Destroy,
+}
+
+#[derive(Parser, PartialEq)]
+struct Cleanup {
+    /// Delete archives older than this number of days.
+    older_than: Option<i64>,
 }
 
 #[derive(Parser, PartialEq)]
@@ -86,7 +95,27 @@ fn main() -> Result<()> {
         }
         Command::Remove(remove) => Archiver::from_config(&config)?.remove(remove.index)?,
         Command::List => Archiver::from_config(&config)?.list(),
+        Command::Cleanup(c) => cleanup(&config, c.older_than)?,
         Command::Destroy => destroy(&config)?,
+    }
+
+    Ok(())
+}
+
+fn cleanup(config: &WateorConfig, days: Option<i64>) -> Result<()> {
+    let db = open_db(config)?;
+    let days = days.unwrap_or(config.cleanup_older_than_days);
+    let ts = (Utc::now() - Duration::days(days as i64)).timestamp();
+    let crates_to_delete = db
+        .iter()
+        .rev()
+        .map(|def| Ok(decode_from_slice(&def?.1, Configuration::standard())?))
+        .filter_map(|crr: Result<Crate>| crr.ok())
+        .filter(|cr| cr.timestamp < ts);
+
+    for cr in crates_to_delete {
+        std::fs::remove_file(cr.archive_path)?;
+        db.remove(cr.timestamp.to_be_bytes())?;
     }
 
     Ok(())

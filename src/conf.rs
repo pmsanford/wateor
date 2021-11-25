@@ -9,6 +9,7 @@ pub struct WateorConfig {
     pub config_file: PathBuf,
     pub max_file_size_bytes: u64,
     pub remove_on_restore: bool,
+    pub cleanup_older_than_days: i64,
 }
 
 fn get_default_config_path() -> Result<PathBuf> {
@@ -49,11 +50,14 @@ impl WateorConfig {
 
         let remove_on_restore = settings.get("remove_on_restore").unwrap_or(false);
 
+        let cleanup_older_than_days = settings.get("cleanup_older_than_days").unwrap_or(30);
+
         Ok(Self {
             data_dir,
             config_file: config_path,
             max_file_size_bytes,
             remove_on_restore,
+            cleanup_older_than_days,
         })
     }
 }
