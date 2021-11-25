@@ -216,6 +216,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dtoa"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56899898ce76aaf4a0f24d914c97ea6ed976d42fec6ad33fcbb0a1103e07b2b0"
+
+[[package]]
 name = "filetime"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -772,6 +778,9 @@ name = "serde"
 version = "1.0.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f12d06de37cf59146fbdecab66aa99f9fe4f78722e3607577a5375d66bd0c913"
+dependencies = [
+ "serde_derive",
+]
 
 [[package]]
 name = "serde-hjson"
@@ -786,6 +795,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_derive"
+version = "1.0.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7bc1a1ab1961464eae040d96713baa5a724a8152c1222492465b54322ec508b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -794,6 +814,18 @@ dependencies = [
  "itoa",
  "ryu",
  "serde 1.0.130",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8c608a35705a5d3cdc9fbe403147647ff34b921f8e833e49306df898f9b20af"
+dependencies = [
+ "dtoa",
+ "indexmap",
+ "serde 1.0.130",
+ "yaml-rust",
 ]
 
 [[package]]
@@ -1009,6 +1041,8 @@ dependencies = [
  "openssl",
  "rand",
  "rpassword",
+ "serde 1.0.130",
+ "serde_yaml",
  "size-display",
  "sled",
  "tar",

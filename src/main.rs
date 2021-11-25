@@ -46,6 +46,8 @@ enum Command {
     Remove(Remove),
     /// Remove archives older than a certain number of days.
     Cleanup(Cleanup),
+    /// Serialize current config to yaml.
+    Config,
     /// Delete all data managed by wateor.
     Destroy,
 }
@@ -96,6 +98,7 @@ fn main() -> Result<()> {
         Command::Remove(remove) => Archiver::from_config(&config)?.remove(remove.index)?,
         Command::List => Archiver::from_config(&config)?.list(),
         Command::Cleanup(c) => cleanup(&config, c.older_than)?,
+        Command::Config => println!("{}", serde_yaml::to_string(&config)?),
         Command::Destroy => destroy(&config)?,
     }
 

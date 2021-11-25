@@ -1,9 +1,10 @@
 use anyhow::{Error, Result};
 use config::{Config, Environment, File};
 use directories::BaseDirs;
+use serde::Serialize;
 use std::path::PathBuf;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct WateorConfig {
     pub data_dir: PathBuf,
     pub config_file: PathBuf,
