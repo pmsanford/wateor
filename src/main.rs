@@ -1,4 +1,4 @@
-use std::{env, fs::File, io::Write};
+use std::{fs::File, io::Write, path::PathBuf};
 
 mod archive;
 mod conf;
@@ -7,60 +7,60 @@ mod encryption;
 use anyhow::{bail, Context, Result};
 use archive::{Archiver, Crate, DB_FOLDER_NAME};
 use bincode::{config::Configuration, decode_from_slice};
+use clap::Parser;
 use conf::WateorConfig;
 use encryption::{PRIV_KEY_NAME, PUB_KEY_NAME};
 use openssl::{rsa::Rsa, symm::Cipher};
 use sled::{Db, IVec};
 
+/// Clean up files strewn about your git repo quickly and securely, with
+/// the option to restore them later or consign them to an (encrypted)
+/// black hole.
+#[derive(Parser)]
+#[clap(version = "0.1", author = "Paul Sanford <me@paulsanford.net>")]
+struct Opts {
+    /// Path to the config file for the application. If not specified, looks
+    /// in an OS-dependent default config directory.
+    #[clap(short, long)]
+    config_file: Option<PathBuf>,
+    #[clap(subcommand)]
+    command: Command,
+}
+
+#[derive(Parser, PartialEq)]
+enum Command {
+    /// Create the database and encryption keys used by wateor.
+    Init,
+    /// Gather, compress, and encrypt all untracked files in the repo.
+    Store,
+    /// Decrypt an archive and restore its contents to their original locations
+    /// in the repo.
+    Restore(Restore),
+    /// List archives managed by wateor.
+    List,
+    /// Delete all data managed by wateor.
+    Destroy,
+}
+
+#[derive(Parser, PartialEq)]
+struct Restore {
+    /// The index of the archive to restore. If not specified, the most recent
+    /// archive is restored. Find the index with the list command.
+    index: Option<usize>,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let opts: Opts = Opts::parse();
     let config = WateorConfig::read_config().context("Couldn't read config file")?;
-    if args.len() < 2 {
-        bail!("Need a command");
+    if opts.command != Command::Init && !check_init(&config) {
+        bail!("You must run init first");
     }
-    if args[1] == "init" {
-        init(&config)?;
-    } else {
-        if !check_init(&config) {
-            bail!("Need to run init first");
-        }
-        let archiver = Archiver::from_config(&config)?;
-        match args[1].as_str() {
-            "store" => archiver.store(),
-            "restore" => {
-                let index = args.get(2).and_then(|idx| idx.parse::<usize>().ok());
-                archiver.restore(index)
-            }
-            "list" => archiver.list(),
-            "clean" => {
-                std::mem::drop(archiver);
-                let db = open_db(&config).context("Couldn't open database")?;
-                for archive in db.iter().map(|r| r.map(|i| decode_crate(&i))) {
-                    let archive = archive??;
-                    std::fs::remove_file(&archive.archive_path).with_context(|| {
-                        format!(
-                            "Couldn't remove file at {}",
-                            archive.archive_path.to_string_lossy()
-                        )
-                    })?;
-                }
-                println!(
-                    "Removing contents of data directory at {}",
-                    config.data_dir.to_string_lossy()
-                );
-                std::fs::remove_dir_all(config.data_dir.join(DB_FOLDER_NAME))
-                    .context("Couldn't remove wateor db folder")?;
-                std::fs::remove_file(config.data_dir.join(PRIV_KEY_NAME))
-                    .context("Couldn't remove private key file")?;
-                std::fs::remove_file(config.data_dir.join(PUB_KEY_NAME))
-                    .context("Couldn't remove public key file")?;
-                Ok(())
-            }
-            _ => {
-                println!("Try init, store, restore, list, clean");
-                Ok(())
-            }
-        }?;
+    match opts.command {
+        Command::Init => init(&config)?,
+        Command::Store => Archiver::from_config(&config)?.store()?,
+        Command::Restore(restore) => Archiver::from_config(&config)?.restore(restore.index)?,
+        Command::List => Archiver::from_config(&config)?.list()?,
+        Command::Destroy => destroy(&config)?,
     }
 
     Ok(())
@@ -112,5 +112,29 @@ fn init(config: &WateorConfig) -> Result<()> {
         .context("Couldn't write public key file")?;
     println!("Created public key at {:#?}", pub_path);
 
+    Ok(())
+}
+
+fn destroy(config: &WateorConfig) -> Result<()> {
+    let db = open_db(config).context("Couldn't open database")?;
+    for archive in db.iter().map(|r| r.map(|i| decode_crate(&i))) {
+        let archive = archive??;
+        std::fs::remove_file(&archive.archive_path).with_context(|| {
+            format!(
+                "Couldn't remove file at {}",
+                archive.archive_path.to_string_lossy()
+            )
+        })?;
+    }
+    println!(
+        "Removing contents of data directory at {}",
+        config.data_dir.to_string_lossy()
+    );
+    std::fs::remove_dir_all(config.data_dir.join(DB_FOLDER_NAME))
+        .context("Couldn't remove wateor db folder")?;
+    std::fs::remove_file(config.data_dir.join(PRIV_KEY_NAME))
+        .context("Couldn't remove private key file")?;
+    std::fs::remove_file(config.data_dir.join(PUB_KEY_NAME))
+        .context("Couldn't remove public key file")?;
     Ok(())
 }
