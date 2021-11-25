@@ -2,17 +2,18 @@ use std::{fs::File, io::Write, path::PathBuf};
 
 mod archive;
 mod conf;
+mod data;
 mod encryption;
 
 use anyhow::{bail, Context, Result};
-use archive::{Archiver, Crate, RestoreResult, DB_FOLDER_NAME};
-use bincode::{config::Configuration, decode_from_slice};
+use archive::{Archiver, RestoreResult, DB_FOLDER_NAME};
 use chrono::{Duration, Utc};
 use clap::Parser;
 use conf::WateorConfig;
 use encryption::{PRIV_KEY_NAME, PUB_KEY_NAME};
 use openssl::{rsa::Rsa, symm::Cipher};
-use sled::{Db, IVec};
+
+use data::WateorDb;
 
 /// Clean up files strewn about your git repo quickly and securely, with
 /// the option to restore them later or consign them to an (encrypted)
@@ -46,7 +47,9 @@ enum Command {
     Remove(Remove),
     /// Remove archives older than a certain number of days.
     Cleanup(Cleanup),
-    /// Serialize current config to yaml.
+    /// Serialize current config to yaml. This will be the combination of
+    /// values specified in an existing config file, if any, and defaults for
+    /// options not specified in the config file.
     Config,
     /// Delete all data managed by wateor.
     Destroy,
@@ -106,30 +109,16 @@ fn main() -> Result<()> {
 }
 
 fn cleanup(config: &WateorConfig, days: Option<i64>) -> Result<()> {
-    let db = open_db(config)?;
+    let db = WateorDb::new(config)?;
     let days = days.unwrap_or(config.cleanup_older_than_days);
     let ts = (Utc::now() - Duration::days(days as i64)).timestamp();
-    let crates_to_delete = db
-        .iter()
-        .rev()
-        .map(|def| Ok(decode_from_slice(&def?.1, Configuration::standard())?))
-        .filter_map(|crr: Result<Crate>| crr.ok())
-        .filter(|cr| cr.timestamp < ts);
+    let crates_to_delete = db.iter_crates().filter(|cr| cr.timestamp < ts);
 
     for cr in crates_to_delete {
-        std::fs::remove_file(cr.archive_path)?;
-        db.remove(cr.timestamp.to_be_bytes())?;
+        db.delete(cr)?;
     }
 
     Ok(())
-}
-
-fn open_db(config: &WateorConfig) -> Result<Db> {
-    Ok(sled::open(config.data_dir.join(DB_FOLDER_NAME))?)
-}
-
-fn decode_crate(db_item: &(IVec, IVec)) -> Result<Crate> {
-    Ok(decode_from_slice(&db_item.1, Configuration::standard())?)
 }
 
 fn check_init(config: &WateorConfig) -> bool {
@@ -147,7 +136,7 @@ fn init(config: &WateorConfig) -> Result<()> {
             config.data_dir.to_string_lossy()
         )
     })?;
-    let _db = open_db(config)?;
+    let _db = WateorDb::new(config)?;
     println!("Initialized db");
     let rsa = Rsa::generate(2048)?;
     let pass = prompt("Passcode for key: ")?;
@@ -174,9 +163,8 @@ fn init(config: &WateorConfig) -> Result<()> {
 }
 
 fn destroy(config: &WateorConfig) -> Result<()> {
-    let db = open_db(config).context("Couldn't open database")?;
-    for archive in db.iter().map(|r| r.map(|i| decode_crate(&i))) {
-        let archive = archive??;
+    let db = WateorDb::new(config)?;
+    for archive in db.iter_crates() {
         std::fs::remove_file(&archive.archive_path).with_context(|| {
             format!(
                 "Couldn't remove file at {}",

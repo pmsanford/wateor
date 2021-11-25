@@ -5,21 +5,23 @@ use std::{
 };
 
 use anyhow::{Context, Error, Result};
-use bincode::{config::Configuration, decode_from_slice, encode_to_vec, Decode, Encode};
+use bincode::{config::Configuration, encode_to_vec};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use git2::{Repository, Status};
-use sled::Db;
 use tar::{Archive, Builder};
 
-use crate::encryption::Crypto;
 use crate::{conf::WateorConfig, prompt};
+use crate::{
+    data::{Crate, WateorDb},
+    encryption::Crypto,
+};
 
 pub static DB_FOLDER_NAME: &str = "wateor.db";
 
 pub struct Archiver {
     crypto: Crypto,
-    db: Db,
+    db: WateorDb,
     repo: Repository,
     repo_path: PathBuf,
     config: WateorConfig,
@@ -35,8 +37,7 @@ impl Archiver {
 
         let repo_path = PathBuf::from(basepath);
 
-        let db =
-            sled::open(config.data_dir.join(DB_FOLDER_NAME)).context("Couldn't open wateor db")?;
+        let db = WateorDb::new(config)?;
 
         let crypto = Crypto::from_config(config)?;
 
@@ -102,7 +103,7 @@ impl Archiver {
             encrypted.iv,
         )?;
 
-        self.db.insert(
+        self.db.db.insert(
             time.to_be_bytes(),
             encode_to_vec(cr, Configuration::standard())?,
         )?;
@@ -117,10 +118,7 @@ impl Archiver {
 
     fn iter_repo_crates(&self) -> impl Iterator<Item = Crate> + '_ {
         self.db
-            .iter()
-            .rev()
-            .map(|def| Ok(decode_from_slice(&def?.1, Configuration::standard())?))
-            .filter_map(|crr: Result<Crate>| crr.ok())
+            .iter_crates()
             .filter(|cr| cr.repo_path == self.repo_path)
     }
 
@@ -145,8 +143,7 @@ impl Archiver {
 
     pub fn remove(&self, index: Option<usize>) -> Result<()> {
         let cr = self.get_crate_description(index)?;
-        std::fs::remove_file(cr.archive_path)?;
-        self.db.remove(cr.timestamp.to_be_bytes())?;
+        self.db.delete(cr)?;
         Ok(())
     }
 
@@ -194,47 +191,6 @@ pub enum RestoreResult {
 
 fn input_to_index(input: Option<usize>) -> usize {
     input.unwrap_or(1) - 1
-}
-
-#[derive(Encode, Decode)]
-pub struct Crate {
-    pub timestamp: i64,
-    pub archive_path: PathBuf,
-    pub repo_path: PathBuf,
-    pub branch: String,
-    pub commit_id: String,
-    pub file_list: Vec<String>,
-    pub decryption_key: Vec<u8>,
-    pub iv: [u8; 16],
-}
-
-impl Crate {
-    fn new(
-        timestamp: i64,
-        archive_path: PathBuf,
-        repo: &Repository,
-        repo_path: &Path,
-        file_list: Vec<String>,
-        decryption_key: Vec<u8>,
-        iv: [u8; 16],
-    ) -> Result<Self> {
-        let head = repo.head()?;
-        let commit = head.peel_to_commit()?;
-
-        Ok(Crate {
-            timestamp,
-            archive_path,
-            repo_path: PathBuf::from(repo_path),
-            branch: head
-                .shorthand()
-                .ok_or_else(|| Error::msg("Branch has non-utf8 shorthand"))?
-                .to_string(),
-            commit_id: commit.id().to_string(),
-            file_list,
-            decryption_key,
-            iv,
-        })
-    }
 }
 
 struct ArchiveResult {
