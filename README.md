@@ -6,9 +6,13 @@ This command line tool will collect all the untracked files in your repo, create
 
 ## Why is this?
 
-I wrote this to solve a problem that may be one only I have when I need to do some trouleshooting or ops-type stuff. I'll open a new terminal (which, in my setup, defaults to the root of whatever repo I'm working in) and start working, spewing log files and temporary yaml configs all over the repo hierarchy. Then, I'll go to lunch, and come back ready to work on some code again, but my working tree is full of garbage.
+I wrote this to solve a problem that may be one only I have: when I need to do some trouleshooting or ops-type stuff I'll open a new terminal (which, in my setup, defaults to the root of whatever repo I'm working in) and start working, spewing log files and temporary yaml configs all over the repo hierarchy. Then, I'll go to lunch, and come back ready to work on some code again, but my working tree is full of garbage.
 
-Sure, there's `git clean -f`, but.. what if there's something in there I need later? OK, so just copy it all to a `maybe_later` directory. But.. what if there's a password or key in there somewhere I don't want to leave rotting in a folder somewhere? Now I have to deal with it _now_ instead of _later_. There must be a better way! Well, now there is.
+Sure, there's `git clean -f`, but.. what if there's something in there I need later? OK, so just copy it all to a `maybe_later` directory. But.. what if there's a password or key in there somewhere I don't want to leave rotting in a folder somewhere? I really just want one command to sweep it all into a box I can put on a shelf and forget about - and now I have one.
+
+## Note
+
+This is a tool I developed in a few days to meet a need - I hope it's useful, but it's not a mature tool, so I wouldn't recommend using it to store or protect anything truly sensitive.
 
 ## Usage
 
