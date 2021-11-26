@@ -1,13 +1,21 @@
-use std::{fs::File, io::Write, path::{Path, PathBuf}};
+use std::{
+    fs::File,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{bail, Context, Error, Result};
 use bincode::{config::Configuration, decode_from_slice, Decode, Encode};
-use chrono::{Duration, Utc};
+use chrono::{Duration, Local, TimeZone, Utc};
 use git2::Repository;
 use openssl::{rsa::Rsa, symm::Cipher};
 use sled::Db;
 
-use crate::{conf::WateorConfig, encryption::{Crypto, PRIV_KEY_NAME, PUB_KEY_NAME}, prompt};
+use crate::{
+    conf::WateorConfig,
+    encryption::{Crypto, PRIV_KEY_NAME, PUB_KEY_NAME},
+    prompt,
+};
 
 pub static DB_FOLDER_NAME: &str = "wateor.db";
 
@@ -16,7 +24,7 @@ pub struct WateorDb {
 }
 
 impl WateorDb {
-    pub fn new(config: &WateorConfig) -> Result<Self> {
+    pub fn from_config(config: &WateorConfig) -> Result<Self> {
         let db =
             sled::open(config.data_dir.join(DB_FOLDER_NAME)).context("Couldn't open wateor db")?;
 
@@ -38,6 +46,12 @@ impl WateorDb {
         self.db.remove(cr.timestamp.to_be_bytes())?;
 
         Ok(())
+    }
+
+    pub fn list_all(&self) {
+        for (idx, cr) in self.iter_crates().enumerate() {
+            print_crate_description(cr, idx + 1);
+        }
     }
 }
 
@@ -83,7 +97,7 @@ impl Crate {
 }
 
 pub fn cleanup(config: &WateorConfig, days: Option<i64>) -> Result<()> {
-    let db = WateorDb::new(config)?;
+    let db = WateorDb::from_config(config)?;
     let days = days.unwrap_or(config.cleanup_older_than_days);
     let ts = (Utc::now() - Duration::days(days as i64)).timestamp();
     let crates_to_delete = db.iter_crates().filter(|cr| cr.timestamp < ts);
@@ -106,7 +120,7 @@ pub fn init(config: &WateorConfig) -> Result<()> {
             config.data_dir.to_string_lossy()
         )
     })?;
-    let _db = WateorDb::new(config)?;
+    let _db = WateorDb::from_config(config)?;
     println!("Initialized db");
     let rsa = Rsa::generate(2048)?;
     let pass = prompt("Passcode for key: ")?;
@@ -133,7 +147,7 @@ pub fn init(config: &WateorConfig) -> Result<()> {
 }
 
 pub fn destroy(config: &WateorConfig) -> Result<()> {
-    let db = WateorDb::new(config)?;
+    let db = WateorDb::from_config(config)?;
     for archive in db.iter_crates() {
         std::fs::remove_file(&archive.archive_path).with_context(|| {
             format!(
@@ -159,20 +173,40 @@ pub fn input_to_index(input: Option<usize>) -> usize {
     input.unwrap_or(1) - 1
 }
 
+pub fn print_crate_description(cr: Crate, idx: usize) {
+    let dt = Local.timestamp(cr.timestamp, 0);
+    println!("{}. Date: {}", idx, dt);
+    println!("   Branch: {} (commit id {})", cr.branch, cr.commit_id);
+    println!("   Files:");
+    for file in cr.file_list {
+        println!("     {}", file);
+    }
+}
 
-pub fn decrypt(config: &WateorConfig, index: Option<usize>, destination: Option<PathBuf>) -> Result<()> {
-    let db = WateorDb::new(config)?;
+pub fn decrypt(
+    config: &WateorConfig,
+    index: Option<usize>,
+    destination: Option<PathBuf>,
+) -> Result<()> {
+    let db = WateorDb::from_config(config)?;
     let crypto = Crypto::from_config(config)?;
     let index = input_to_index(index);
-    let cr = db.iter_crates().nth(index).ok_or_else(|| Error::msg(format!("Couldn't find archive {}", index)))?;
+    let cr = db
+        .iter_crates()
+        .nth(index)
+        .ok_or_else(|| Error::msg(format!("Couldn't find archive {}", index)))?;
     let archive_name = PathBuf::from(&cr.archive_path);
-    let archive_name = archive_name.file_name().ok_or_else(|| Error::msg("Corrupt archive path"))?;
-    let destination = destination.or_else(|| std::env::current_dir().ok()).ok_or_else(|| Error::msg("Couldn't find an appropriate destination"))?;
+    let archive_name = archive_name
+        .file_name()
+        .ok_or_else(|| Error::msg("Corrupt archive path"))?;
+    let destination = destination
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| Error::msg("Couldn't find an appropriate destination"))?;
     let mut destination = File::create(destination.join(archive_name))?;
     let pass = prompt("Passcode for key: ")?;
-    let archive_data = crypto.decrypt_archive(&pass, &cr.decryption_key, &cr.iv, &cr.archive_path)?;
+    let archive_data =
+        crypto.decrypt_archive(&pass, &cr.decryption_key, &cr.iv, &cr.archive_path)?;
     destination.write_all(&archive_data)?;
-
 
     Ok(())
 }

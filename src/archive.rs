@@ -7,11 +7,15 @@ use std::{
 use anyhow::{Context, Error, Result};
 use bincode::{config::Configuration, encode_to_vec};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, Utc};
 use git2::{Repository, Status};
 use tar::{Archive, Builder};
 
-use crate::{conf::WateorConfig, data::input_to_index, prompt};
+use crate::{
+    conf::WateorConfig,
+    data::{input_to_index, print_crate_description},
+    prompt,
+};
 use crate::{
     data::{Crate, WateorDb},
     encryption::Crypto,
@@ -35,7 +39,7 @@ impl Archiver {
 
         let repo_path = PathBuf::from(basepath);
 
-        let db = WateorDb::new(config)?;
+        let db = WateorDb::from_config(config)?;
 
         let crypto = Crypto::from_config(config)?;
 
@@ -122,13 +126,7 @@ impl Archiver {
 
     pub fn list(&self) {
         for (idx, cr) in self.iter_repo_crates().enumerate() {
-            let dt = Local.timestamp(cr.timestamp, 0);
-            println!("{}. Date: {}", idx + 1, dt);
-            println!("   Branch: {} (commit id {})", cr.branch, cr.commit_id);
-            println!("   Files:");
-            for file in cr.file_list {
-                println!("     {}", file);
-            }
+            print_crate_description(cr, idx + 1);
         }
     }
 

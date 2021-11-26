@@ -10,7 +10,7 @@ use archive::{Archiver, RestoreResult};
 use clap::Parser;
 use conf::WateorConfig;
 
-use crate::data::{check_init, cleanup, decrypt, destroy, init};
+use crate::data::{check_init, cleanup, decrypt, destroy, init, WateorDb};
 
 /// Clean up files strewn about your git repo quickly and securely, with
 /// the option to restore them later or consign them to an (encrypted)
@@ -40,7 +40,7 @@ enum Command {
     Decrypt(Decrypt),
     /// List archives managed by wateor.
     #[clap(alias = "ls")]
-    List,
+    List(List),
     /// Remove a specific archive managed by wateor without restoring.
     #[clap(alias = "rm")]
     Remove(Remove),
@@ -55,9 +55,16 @@ enum Command {
 }
 
 #[derive(Parser, PartialEq)]
+struct List {
+    #[clap(short, long)]
+    all: bool,
+}
+
+#[derive(Parser, PartialEq)]
 struct Decrypt {
     /// The index of the archive to decrypt. If not specified, the most recent
-    /// archive is removed. Find the index with the list command.
+    /// archive is removed. Note that these indicies are not repo-specific, so
+    /// you'll need to use list --all to find the index.
     index: Option<usize>,
     /// Directory to store the decrypted archive. If not specified, uses the
     /// current working directory.
@@ -109,7 +116,8 @@ fn main() -> Result<()> {
         }
         Command::Decrypt(d) => decrypt(&config, d.index, d.destination)?,
         Command::Remove(remove) => Archiver::from_config(&config)?.remove(remove.index)?,
-        Command::List => Archiver::from_config(&config)?.list(),
+        Command::List(list) if list.all => WateorDb::from_config(&config)?.list_all(),
+        Command::List(_) => Archiver::from_config(&config)?.list(),
         Command::Cleanup(c) => cleanup(&config, c.older_than)?,
         Command::Config => println!("{}", serde_yaml::to_string(&config)?),
         Command::Destroy => destroy(&config)?,
