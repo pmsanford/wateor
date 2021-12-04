@@ -110,9 +110,9 @@ impl Archiver {
             encode_to_vec(cr, Configuration::standard())?,
         )?;
 
-        for file in &archive.file_list {
-            std::fs::remove_file(file)
-                .with_context(|| format!("Failed to remove file at {}", file))?;
+        for file in archive.file_list.iter().map(|p| self.repo_path.join(p)) {
+            std::fs::remove_file(&file)
+                .with_context(|| format!("Failed to remove file at {}", file.to_string_lossy()))?;
         }
 
         Ok(())
