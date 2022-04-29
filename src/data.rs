@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Error, Result};
-use bincode::{config::Configuration, decode_from_slice, Decode, Encode};
+use bincode::{config, decode_from_slice, Decode, Encode};
 use chrono::{Duration, Local, TimeZone, Utc};
 use git2::Repository;
 use openssl::{rsa::Rsa, symm::Cipher};
@@ -35,9 +35,7 @@ impl WateorDb {
         self.db
             .iter()
             .rev()
-            .map::<Result<Crate>, _>(|def| {
-                Ok(decode_from_slice(&def?.1, Configuration::standard())?)
-            })
+            .map::<Result<Crate>, _>(|def| Ok(decode_from_slice(&def?.1, config::standard())?.0))
             .filter_map(std::result::Result::ok)
     }
 

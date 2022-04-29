@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Error, Result};
-use bincode::{config::Configuration, encode_to_vec};
+use bincode::{config, encode_to_vec};
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression};
 use chrono::{DateTime, Local, Utc};
 use git2::{Repository, Status};
@@ -105,10 +105,9 @@ impl Archiver {
             encrypted.iv,
         )?;
 
-        self.db.db.insert(
-            time.to_be_bytes(),
-            encode_to_vec(cr, Configuration::standard())?,
-        )?;
+        self.db
+            .db
+            .insert(time.to_be_bytes(), encode_to_vec(cr, config::standard())?)?;
 
         for file in archive.file_list.iter().map(|p| self.repo_path.join(p)) {
             std::fs::remove_file(&file)

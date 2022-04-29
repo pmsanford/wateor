@@ -36,10 +36,10 @@ impl WateorConfig {
     }
 
     pub fn read_config_from(config_path: PathBuf) -> Result<Self> {
-        let mut settings = Config::default();
-        settings
-            .merge(File::from(config_path.clone()).required(false))?
-            .merge(Environment::with_prefix("WATEOR"))?;
+        let settings = Config::builder()
+            .add_source(File::from(config_path.clone()).required(false))
+            .add_source(Environment::with_prefix("WATEOR"))
+            .build()?;
 
         let data_dir: PathBuf = if let Ok(data_dir) = settings.get("data_dir") {
             data_dir

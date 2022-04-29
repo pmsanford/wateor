@@ -15,7 +15,7 @@ use crate::data::{check_init, cleanup, decrypt, destroy, init, WateorDb};
 /// Clean up files strewn about your git repo quickly and securely, with
 /// the option to restore them later or consign them to an (encrypted)
 /// black hole.
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[clap(version = "0.1", author = "Paul Sanford <me@paulsanford.net>")]
 struct Opts {
     /// Path to the config file for the application. If not specified, looks
@@ -26,7 +26,7 @@ struct Opts {
     command: Command,
 }
 
-#[derive(Parser, PartialEq)]
+#[derive(Parser, PartialEq, Debug)]
 enum Command {
     /// Create the database and encryption keys used by wateor.
     Init,
@@ -54,13 +54,13 @@ enum Command {
     Destroy,
 }
 
-#[derive(Parser, PartialEq)]
+#[derive(Parser, PartialEq, Debug)]
 struct List {
     #[clap(short, long)]
     all: bool,
 }
 
-#[derive(Parser, PartialEq)]
+#[derive(Parser, PartialEq, Debug)]
 struct Decrypt {
     /// The index of the archive to decrypt. If not specified, the most recent
     /// archive is removed. Note that these indicies are not repo-specific, so
@@ -71,20 +71,20 @@ struct Decrypt {
     destination: Option<PathBuf>,
 }
 
-#[derive(Parser, PartialEq)]
+#[derive(Parser, PartialEq, Debug)]
 struct Cleanup {
     /// Delete archives older than this number of days.
     older_than: Option<i64>,
 }
 
-#[derive(Parser, PartialEq)]
+#[derive(Parser, PartialEq, Debug)]
 struct Remove {
     /// The index of the archive to remove. If not specified, the most recent
     /// archive is removed. Find the index with the list command.
     index: Option<usize>,
 }
 
-#[derive(Parser, PartialEq)]
+#[derive(Parser, PartialEq, Debug)]
 struct Restore {
     /// The index of the archive to restore. If not specified, the most recent
     /// archive is restored. Find the index with the list command.
@@ -127,5 +127,5 @@ fn main() -> Result<()> {
 }
 
 fn prompt(prompt: &str) -> Result<String> {
-    Ok(rpassword::read_password_from_tty(Some(prompt))?)
+    Ok(rpassword::prompt_password(prompt)?)
 }
