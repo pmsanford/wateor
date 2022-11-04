@@ -178,7 +178,7 @@ impl Archiver {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum RestoreResult {
     Full,
     Partial,
